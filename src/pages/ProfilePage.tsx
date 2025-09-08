@@ -131,154 +131,156 @@ const ProfilePage: React.FC = () => {
     }
   };
 
- const handleSubmit = async (e: FormEvent) => {
-  e.preventDefault();
-  setIsUploading(true);
-
-  try {
-    let avatarUrl: string | null = profile?.avatar_url || null;
-
-    // Upload avatar if changed
-    if (avatarFile) {
-      const fileExt = avatarFile.name.split('.').pop();
-      const fileName = `avatar.${fileExt}`;
-      const filePath = `${user.id}/${fileName}`;
-
-      // First, try to remove any existing avatar files for this user
-      try {
-        const { data: existingFiles } = await supabase.storage
-          .from('avatars')
-          .list(user.id);
-        
-        if (existingFiles && existingFiles.length > 0) {
-          const filesToRemove = existingFiles.map(file => `${user.id}/${file.name}`);
-          await supabase.storage
-            .from('avatars')
-            .remove(filesToRemove);
-        }
-      } catch (cleanupError) {
-        console.log('No existing avatars to remove or cleanup failed:', cleanupError);
-      }
-
-      // Upload the new avatar
-      const { error: uploadError } = await supabase.storage
-        .from('avatars')
-        .upload(filePath, avatarFile, {
-          upsert: true,
-          cacheControl: '3600'
-        });
-
-      if (uploadError) {
-        console.error('Avatar upload error:', uploadError);
-        throw uploadError;
-      }
-
-      // Get public URL
-      const { data: urlData } = supabase.storage
-        .from('avatars')
-        .getPublicUrl(filePath);
-
-      avatarUrl = urlData.publicUrl;
+  const handleCancelEdit = () => {
+    // Reset form data to original profile values
+    if (profile) {
+      setFormData({
+        full_name: profile.full_name || "",
+        username: profile.username || "",
+        bio: profile.bio || ""
+      });
+      setAvatarPreview(profile.avatar_url);
+      setAvatarFile(null);
     }
-
-    // Prepare update data
-    const updateData: any = {
-      full_name: formData.full_name,
-      bio: formData.bio,
-      avatar_url: avatarUrl
-    };
-
-    // Only include username if it's different from current
-    if (formData.username !== profile?.username) {
-      updateData.username = formData.username;
-    }
-
-    console.log('Updating profile with data:', updateData);
-
-    // Update profile in database
-    const { data, error } = await supabase
-      .from("profiles")
-      .update(updateData)
-      .eq("id", user.id)
-      .select() // Return the updated record
-      .single();
-
-    if (error) {
-      console.error('Profile update error details:', error);
-      
-      // Handle specific error cases
-      if (error.code === '23505') { // Unique violation
-        if (error.message.includes('username')) {
-          alert('Username already exists. Please choose a different one.');
-        } else if (error.message.includes('email')) {
-          alert('Email already exists. Please use a different email.');
-        }
-      } else if (error.code === '42501') { // Permission denied
-        alert('Permission denied. Please check your RLS policies.');
-      }
-      
-      throw error;
-    }
-
-    // Update local profile state with the returned data
-    if (data) {
-      setProfile(data);
-      setAvatarPreview(data.avatar_url);
-    }
-
     setEditMode(false);
-    setAvatarFile(null); // Reset the file state
-    
-    // Show success message
-    alert('Profile updated successfully!');
-    
-  } catch (error: any) {
-    console.error("Error updating profile:", error);
-    
-    // More specific error messages
-    if (error.message?.includes('duplicate key')) {
-      alert("This username is already taken. Please choose another one.");
-    } else {
-      alert("Failed to update profile. Please try again.");
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setIsUploading(true);
+
+    try {
+      let avatarUrl: string | null = profile?.avatar_url || null;
+
+      // Upload avatar if changed
+      if (avatarFile) {
+        const fileExt = avatarFile.name.split('.').pop();
+        const fileName = `avatar.${fileExt}`;
+        const filePath = `${user.id}/${fileName}`;
+
+        // First, try to remove any existing avatar files for this user
+        try {
+          const { data: existingFiles } = await supabase.storage
+            .from('avatars')
+            .list(user.id);
+          
+          if (existingFiles && existingFiles.length > 0) {
+            const filesToRemove = existingFiles.map(file => `${user.id}/${file.name}`);
+            await supabase.storage
+              .from('avatars')
+              .remove(filesToRemove);
+          }
+        } catch (cleanupError) {
+          console.log('No existing avatars to remove or cleanup failed:', cleanupError);
+        }
+
+        // Upload the new avatar
+        const { error: uploadError } = await supabase.storage
+          .from('avatars')
+          .upload(filePath, avatarFile, {
+            upsert: true,
+            cacheControl: '3600'
+          });
+
+        if (uploadError) {
+          console.error('Avatar upload error:', uploadError);
+          throw uploadError;
+        }
+
+        // Get public URL
+        const { data: urlData } = supabase.storage
+          .from('avatars')
+          .getPublicUrl(filePath);
+
+        avatarUrl = urlData.publicUrl;
+      }
+
+      // Prepare update data
+      const updateData: any = {
+        full_name: formData.full_name,
+        bio: formData.bio,
+        avatar_url: avatarUrl
+      };
+
+      // Only include username if it's different from current
+      if (formData.username !== profile?.username) {
+        updateData.username = formData.username;
+      }
+
+      console.log('Updating profile with data:', updateData);
+
+      // Update profile in database
+      const { data, error } = await supabase
+        .from("profiles")
+        .update(updateData)
+        .eq("id", user.id)
+        .select() // Return the updated record
+        .single();
+
+      if (error) {
+        console.error('Profile update error details:', error);
+        
+        // Handle specific error cases
+        if (error.code === '23505') { // Unique violation
+          if (error.message.includes('username')) {
+            alert('Username already exists. Please choose a different one.');
+          } else if (error.message.includes('email')) {
+            alert('Email already exists. Please use a different email.');
+          }
+        } else if (error.code === '42501') { // Permission denied
+          alert('Permission denied. Please check your RLS policies.');
+        }
+        
+        throw error;
+      }
+
+      // Update local profile state with the returned data
+      if (data) {
+        setProfile(data);
+        setAvatarPreview(data.avatar_url);
+      }
+
+      setEditMode(false);
+      setAvatarFile(null); // Reset the file state
+      
+      // Show success message
+      alert('Profile updated successfully!');
+      
+    } catch (error: any) {
+      console.error("Error updating profile:", error);
+      
+      // More specific error messages
+      if (error.message?.includes('duplicate key')) {
+        alert("This username is already taken. Please choose another one.");
+      } else {
+        alert("Failed to update profile. Please try again.");
+      }
+    } finally {
+      setIsUploading(false);
     }
-  } finally {
-    setIsUploading(false);
-  }
-};
+  };
 
-// Add this function to test your Supabase setup
-const testSupabaseConnection = async () => {
-  try {
-    console.log("Testing Supabase connection...");
-    
-    // Test select
-    const { data: selectData, error: selectError } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .single();
-    
-    console.log("Select test:", selectData, selectError);
-    
-    // Test update with minimal data
-    const { data: updateData, error: updateError } = await supabase
-      .from("profiles")
-      .update({ bio: "Test bio " + Date.now() })
-      .eq("id", user.id)
-      .select()
-      .single();
-    
-    console.log("Update test:", updateData, updateError);
-    
-  } catch (error) {
-    console.error("Supabase test failed:", error);
-  }
-};
+  const handleCircleClick = (circleId: string) => {
+    // Navigate to home page with the circle ID as a state parameter
+    navigate("/home", { state: { circleId } });
+  };
 
+  const handlePostClick = () => {
+    // Navigate to create post page
+    navigate("/create-post");
+  };
+
+  const handleCreatePostInCircle = (circleId?: string) => {
+    if (circleId) {
+      navigate("/create-post", { state: { circleId } });
+    } else {
+      navigate("/create-post");
+    }
+  };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    navigate("/login");
+    navigate("/");
   };
 
   return (
@@ -286,7 +288,7 @@ const testSupabaseConnection = async () => {
       <Navbar
         user={user}
         onLogout={handleLogout}
-        onPostClick={() => {}}
+        onPostClick={handlePostClick}
       />
       <div className="max-w-4xl mx-auto p-6">
         {/* Profile Header */}
@@ -331,7 +333,7 @@ const testSupabaseConnection = async () => {
                     stroke="currentColor"
                     viewBox="0 0 24 24"
                     xmlns="http://www.w3.org/2000/svg"
-                  >
+                    >
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -363,7 +365,7 @@ const testSupabaseConnection = async () => {
               <h1 className="text-2xl font-bold mr-4">{profile?.username}</h1>
               {editMode ? (
                 <button
-                  onClick={() => setEditMode(false)}
+                  onClick={handleCancelEdit}
                   className="text-gray-500 mr-2"
                 >
                   Cancel
@@ -449,8 +451,8 @@ const testSupabaseConnection = async () => {
               {circles.map((circle) => (
                 <div
                   key={circle.id}
-                  className="border rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
-                  onClick={() => navigate(`/circle/${circle.id}`)}
+                  className="border rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer group relative"
+                  onClick={() => handleCircleClick(circle.id)}
                 >
                   <div className="flex items-center mb-2">
                     <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center mr-3">
@@ -466,6 +468,19 @@ const testSupabaseConnection = async () => {
                     </div>
                   </div>
                   <p className="text-sm text-gray-600">{circle.description}</p>
+                  
+                  {/* Create Post in Circle Button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCreatePostInCircle(circle.id);
+                    }}
+                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-green-500 text-white p-1 rounded-md text-xs"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    </svg>
+                  </button>
                 </div>
               ))}
             </div>

@@ -52,48 +52,56 @@ export default function NotificationsPage() {
     }
   };
 
-  const handleResponse = async (notifId: string, accepted: boolean, circleId: string, profileId: string) => {
-    if (!user?.id) return;
+  const handleResponse = async (
+  notifId: string,
+  accepted: boolean,
+  circleId: string,
+  profileId: string
+) => {
+  if (!user?.id) return;
 
-    if (accepted) {
-      const { error: updateError } = await supabase
-        .from("circle_members")
-        .update({
-          status: "active",
-        })
-        .eq("circle_id", circleId)
-        .eq("profile_id", profileId);
+  if (accepted) {
+    // Approve: Update the membership status to "active"
+    const { error: updateError } = await supabase
+      .from("circle_members")
+      .update({ status: "active" })
+      .eq("circle_id", circleId)
+      .eq("profile_id", profileId);
 
-      if (updateError) {
-        console.error("Error accepting join request:", updateError);
-        return;
-      }
-    } else {
-      const { error: deleteError } = await supabase
-        .from("circle_members")
-        .delete()
-        .eq("circle_id", circleId)
-        .eq("profile_id", profileId);
-
-      if (deleteError) {
-        console.error("Error rejecting join request:", deleteError);
-      }
+    if (updateError) {
+      console.error("Error accepting join request:", updateError);
+      return;
     }
+  } else {
+    // Reject: Delete the pending membership record
+    const { error: deleteError } = await supabase
+      .from("circle_members")
+      .delete()
+      .eq("circle_id", circleId)
+      .eq("profile_id", profileId);
 
-    const { error: notifError } = await supabase
-      .from("notifications")
-      .update({
-        read: true,
-        response_status: accepted ? "accepted" : "rejected",
-      })
-      .eq("id", notifId);
-
-    if (notifError) {
-      console.error("Error updating notification status:", notifError);
+    if (deleteError) {
+      console.error("Error rejecting join request:", deleteError);
     }
+  }
 
-    fetchNotifications(user.id);
-  };
+  // Update the notification status
+  const { error: notifError } = await supabase
+    .from("notifications")
+    .update({
+      read: true,
+      response_status: accepted ? "accepted" : "rejected",
+    })
+    .eq("id", notifId);
+
+  if (notifError) {
+    console.error("Error updating notification status:", notifError);
+  }
+
+  // Refresh notifications
+  fetchNotifications(user.id);
+};
+
 
   const markAsRead = async (notifId: string) => {
     await supabase.from("notifications").update({

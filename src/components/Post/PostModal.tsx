@@ -60,7 +60,7 @@ export default function PostModal({ onClose, selectedCircleId, onPostCreated }: 
       .upload(filePath, imageFile, {
         cacheControl: "3600",
         upsert: false,
-        contentType: imageFile.type, // ensures correct MIME type
+        contentType: imageFile.type,
       });
 
     if (uploadError) {
@@ -88,13 +88,13 @@ export default function PostModal({ onClose, selectedCircleId, onPostCreated }: 
       console.error("Post insert error:", insertError.message);
       alert("Post creation failed");
     } else {
-      onPostCreated(); // Call the function to refresh posts
+      onPostCreated();
       onClose();
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white p-6 rounded-lg w-96 shadow-lg">
         <h2 className="text-lg font-bold mb-4">Create a Post</h2>
         <label className="block text-sm font-medium mb-1">Select Circle:</label>

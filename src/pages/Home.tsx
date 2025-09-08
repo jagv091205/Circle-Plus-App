@@ -97,6 +97,26 @@ const Home = () => {
     }
   }, [selectedCircleId]);
 
+  useEffect(() => {
+    // Run cleanup on component mount
+    cleanupExpiredStories();
+    // Set up periodic cleanup
+    const cleanupInterval = setInterval(cleanupExpiredStories, 60 * 60 * 1000);
+    return () => clearInterval(cleanupInterval);
+  }, []);
+
+  useEffect(() => {
+    if (selectedCircleId) {
+      fetchCircleName(selectedCircleId);
+    }
+  }, [selectedCircleId]);
+
+  useEffect(() => {
+  if (user) {
+    fetchSuggestedCircles();
+  }
+}, [user, selectedCircleId]);
+
   const cleanupExpiredStories = async () => {
     try {
       const { error } = await supabase
@@ -112,58 +132,97 @@ const Home = () => {
   };
 
   const fetchCircleName = async (circleId: string) => {
-    const { data, error } = await supabase
-      .from("circles")
-      .select("name")
-      .eq("id", circleId)
-      .single();
-    if (!error && data) {
-      setSelectedCircleName(data.name);
-    }
-  };
+  const { data, error } = await supabase
+    .from("circles")
+    .select("name")
+    .eq("id", circleId)
+    .maybeSingle();
+  if (error) {
+    console.error("Error fetching circle name:", error);
+    setSelectedCircleName("Circle not found");
+    return;
+  }
+  if (!data) {
+    console.log("Circle not found or no access");
+    setSelectedCircleName("Circle not found");
+    return;
+  }
+  setSelectedCircleName(data.name);
+};
 
-  useEffect(() => {
-    if (selectedCircleId) {
-      fetchCircleName(selectedCircleId);
-    }
-  }, [selectedCircleId]);
-
-   useEffect(() => {    if (selectedCircleId) {      fetchPosts(selectedCircleId);      fetchStories(selectedCircleId);    }  }, [selectedCircleId]);
-
-  useEffect(() => {
-    // Run cleanup on component mount
-    cleanupExpiredStories();
-
-    // Set up periodic cleanup
-    const cleanupInterval = setInterval(cleanupExpiredStories, 60 * 60 * 1000);
-
-    return () => clearInterval(cleanupInterval);
-  }, []);
 
   const checkMembership = async () => {
-    if (!selectedCircleId || !user) return;
-    const { data: membership, error } = await supabase
-      .from("circle_members")
-      .select("status")
-      .eq("circle_id", selectedCircleId)
-      .eq("profile_id", user.id)
-      .single();
-    if (!error && membership) {
-      setMembershipStatus(membership.status);
-      if (membership.status === 'active') {
-        setIsMember(true);
-        fetchPosts(selectedCircleId);
-        fetchStories(selectedCircleId);
+  if (!selectedCircleId || !user) return;
+  try {
+    const { data: circleData, error: circleError } = await supabase
+      .from("circles")
+      .select("creator_id, is_private")
+      .eq("id", selectedCircleId)
+      .maybeSingle(); // Change this
+    
+    if (circleError || !circleData) {
+      setMembershipStatus("none");
+      setIsMember(false);
+      return;
+    }
+
+    // Rest of your logic stays the same...
+    if (circleData.creator_id === user.id) {
+      setMembershipStatus('active');
+      setIsMember(true);
+      return;
+    }
+    
+    if (circleData.is_private) {
+      const { data: membership, error } = await supabase
+        .from("circle_members")
+        .select("status")
+        .eq("circle_id", selectedCircleId)
+        .eq("profile_id", user.id)
+        .maybeSingle(); // Change this too
+      
+      if (!error && membership) {
+        setMembershipStatus(membership.status);
+        setIsMember(membership.status === "active");
       } else {
+        setMembershipStatus("none");
         setIsMember(false);
-        setPosts([]);
-        setStories([]);
       }
     } else {
-      setMembershipStatus('none');
-      setIsMember(false);
-      setPosts([]);
-      setStories([]);
+      setMembershipStatus('active');
+      setIsMember(true);
+    }
+  } catch (error) {
+    console.error("Error checking membership:", error);
+    setMembershipStatus("none");
+    setIsMember(false);
+  }
+};
+
+
+  const requestToJoinCircle = async () => {
+    if (!selectedCircleId || !user) return;
+
+    try {
+      const { error } = await supabase
+        .from("circle_members")
+        .insert({
+          circle_id: selectedCircleId,
+          profile_id: user.id,
+          status: "pending",
+          role: "member"
+        });
+
+      if (error) {
+        console.error("Error requesting to join:", error);
+        alert("Error requesting to join circle");
+      } else {
+        alert("Join request sent! Waiting for approval.");
+        setMembershipStatus('pending');
+      }
+    } catch (error) {
+      console.error("Error in requestToJoinCircle:", error);
+      alert("An error occurred. Please try again.");
     }
   };
 
@@ -172,34 +231,71 @@ const Home = () => {
   };
 
   const fetchPosts = async (circleId: string) => {
+  if (!user) return;
+
+  // Get both is_private and creator_id in one call
+  const { data: circleData, error: circleError } = await supabase
+    .from("circles")
+    .select("is_private, creator_id")
+    .eq("id", circleId)
+    .maybeSingle();
+
+  if (circleError) {
+    console.error("Error fetching circle data:", circleError);
+    setPosts([]);
+    return;
+  }
+
+  // Handle case where circle doesn't exist
+  if (!circleData) {
+    console.log("Circle not found or no access");
+    setPosts([]);
+    return;
+  }
+
+  // Check access in a single logic flow
+  const isOwner = circleData.creator_id === user.id;
+  const isPublic = !circleData.is_private;
+
+  if (circleData.is_private && !isOwner) {
+    // Check membership only for private circles where user is not owner
     const { data: membership, error: membershipError } = await supabase
       .from("circle_members")
       .select("status")
       .eq("circle_id", circleId)
-      .eq("profile_id", user?.id)
-      .single();
-    if (membershipError || membership?.status !== "active") {
-      console.log("User is not an active member of this circle");
+      .eq("profile_id", user.id)
+      .maybeSingle();
+
+    if (membershipError || !membership || membership.status !== "active") {
+      console.log("User is not an active member of this private circle");
       setPosts([]);
       return;
     }
-    const { data, error } = await supabase
-      .from("posts")
-      .select("*, profiles(*)")
-      .eq("circle_id", circleId)
-      .order("created_at", { ascending: false });
-    if (!error && data) {
-      setPosts(data);
-      const initialCommentInputs: { [key: string]: string } = {};
-      const initialShowComments: { [key: string]: boolean } = {};
-      data.forEach(post => {
-        initialCommentInputs[post.id] = '';
-        initialShowComments[post.id] = false;
-      });
-      setCommentInputs(initialCommentInputs);
-      setShowComments(initialShowComments);
-    }
-  };
+  }
+
+  // Fetch posts if user has access
+  const { data, error } = await supabase
+    .from("posts")
+    .select("*, profiles(*)")
+    .eq("circle_id", circleId)
+    .order("created_at", { ascending: false });
+
+  if (!error && data) {
+    setPosts(data);
+    const initialCommentInputs: { [key: string]: string } = {};
+    const initialShowComments: { [key: string]: boolean } = {};
+    data.forEach(post => {
+      initialCommentInputs[post.id] = '';
+      initialShowComments[post.id] = false;
+    });
+    setCommentInputs(initialCommentInputs);
+    setShowComments(initialShowComments);
+  } else {
+    console.error("Error fetching posts:", error);
+    setPosts([]);
+  }
+};
+
 
   const fetchStories = async (circleId: string) => {
     const { data, error } = await supabase
@@ -208,6 +304,7 @@ const Home = () => {
       .eq("circle_id", circleId)
       .gt("expires_at", new Date().toISOString())
       .order("created_at", { ascending: false });
+
     if (!error && data) {
       setStories(data);
       setHasUserStory(data.some(story => story.profile_id === user?.id));
@@ -226,6 +323,7 @@ const Home = () => {
       `)
       .eq("post_id", postId)
       .order("created_at", { ascending: true });
+
     if (!error && data) {
       setComments(prev => ({
         ...prev,
@@ -248,16 +346,19 @@ const Home = () => {
 
   const addComment = async (postId: string) => {
     if (!commentInputs[postId]?.trim() || !user) return;
+
     const { data: membership } = await supabase
       .from("circle_members")
       .select("status")
       .eq("circle_id", selectedCircleId)
       .eq("profile_id", user.id)
       .single();
+
     if (membership?.status !== "active") {
       alert("You need to be an active member to comment");
       return;
     }
+
     try {
       const { data, error } = await supabase
         .from("comments")
@@ -274,6 +375,7 @@ const Home = () => {
           )
         `)
         .single();
+
       if (!error && data) {
         setComments(prev => ({
           ...prev,
@@ -283,6 +385,7 @@ const Home = () => {
           ...prev,
           [postId]: ''
         }));
+
         const postOwnerId = posts.find(p => p.id === postId)?.author_id;
         if (postOwnerId && postOwnerId !== user.id) {
           const { error: notifError } = await supabase.from("notifications").insert({
@@ -310,9 +413,81 @@ const Home = () => {
     }));
   };
 
+  const fetchSuggestedCircles = async () => {
+  if (!user) return;
+  
+  try {
+    // First get the circles the user is already a member of
+    const { data: userCircles, error: userCirclesError } = await supabase
+      .from("circle_members")
+      .select("circle_id")
+      .eq("profile_id", user.id);
+
+    if (userCirclesError) {
+      console.error("Error fetching user circles:", userCirclesError);
+      return;
+    }
+
+    const userCircleIds = userCircles?.map(member => member.circle_id) || [];
+
+    // Get all public circles
+    const { data: allCircles, error: circlesError } = await supabase
+      .from("circles")
+      .select("*")
+      .eq("is_private", false);
+
+    if (circlesError) {
+      console.error("Error fetching circles:", circlesError);
+      return;
+    }
+
+    // Filter out circles user is already a member of
+    const suggested = allCircles?.filter(circle => 
+      !userCircleIds.includes(circle.id)
+    ) || [];
+
+    // Also exclude the currently selected circle if it exists
+    const filteredSuggested = suggested.filter(circle => 
+      circle.id !== selectedCircleId
+    );
+
+    setSuggestedCircles(filteredSuggested.slice(0, 5)); // Limit to 5 circles
+  } catch (error) {
+    console.error("Error in fetchSuggestedCircles:", error);
+  }
+};
+
+const joinCircle = async (circleId: string) => {
+  if (!user) return;
+
+  try {
+    const { error } = await supabase
+      .from("circle_members")
+      .insert({
+        circle_id: circleId,
+        profile_id: user.id,
+        status: "active", // Direct join for public circles
+        role: "member"
+      });
+
+    if (error) {
+      console.error("Error joining circle:", error);
+      alert("Error joining circle");
+    } else {
+      alert("Successfully joined the circle!");
+      // Remove the joined circle from suggestions
+      setSuggestedCircles(prev => prev.filter(circle => circle.id !== circleId));
+    }
+  } catch (error) {
+    console.error("Error in joinCircle:", error);
+    alert("An error occurred. Please try again.");
+  }
+};
+
   const sendCircleInvitation = async (circleId: string, invitedUserId: string) => {
     const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
     if (userError || !currentUser) return;
+
     try {
       const { error } = await supabase.from("notifications").insert({
         recipient_id: invitedUserId,
@@ -389,8 +564,8 @@ const Home = () => {
             <div className="text-center mt-10">
               <p className="text-gray-500 mb-4">You are not a member of this circle</p>
               <button
-                onClick={() => {/* Add join circle functionality here */}}
-                className="bg-blue-500 text-white px-4 py-2 rounded"
+                onClick={requestToJoinCircle}
+                className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
               >
                 Request to Join
               </button>
@@ -427,8 +602,6 @@ const Home = () => {
                         <p className="text-xs text-center mt-1 truncate w-16">
                           {story.profile_id === user.id ? "Your Story" : story.profiles.username}
                         </p>
-
-                        {/* Show expiration time badge */}
                         <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
                           ⌛
                         </div>
@@ -561,18 +734,27 @@ const Home = () => {
                   ))
                 )}
               </div>
-              <div className="w-1/3 p-4 bg-white rounded-lg shadow-md ml-6">
-                <h2 className="text-lg font-semibold mb-4">Suggested Circles</h2>
-                {suggestedCircles.map((circle) => (
-                  <div key={circle.id} className="flex items-center justify-between mb-4">
-                    <div className="flex items-center">
-                      <div className="w-10 h-10 rounded-full bg-blue-300 mr-3"></div>
-                      <span className="font-medium text-sm">{circle.name}</span>
-                    </div>
-                    <button className="text-blue-500 text-sm">Follow</button>
-                  </div>
-                ))}
-              </div>
+<div className="w-1/3 p-4 bg-white rounded-lg shadow-md ml-6 h-fit max-h-96 overflow-y-auto">
+  <h2 className="text-lg font-semibold mb-4">Suggested Circles</h2>
+  {suggestedCircles.length === 0 ? (
+    <p className="text-gray-500 text-sm">No suggested circles available. You might already be a member of all public circles.</p>
+  ) : (
+    suggestedCircles.map((circle) => (
+      <div key={circle.id} className="flex items-center justify-between mb-4 p-2 bg-gray-50 rounded-lg">
+        <div className="flex items-center">
+          <div className="w-8 h-8 rounded-full bg-blue-300 mr-3 flex-shrink-0"></div>
+          <span className="font-medium text-sm">{circle.name}</span>
+        </div>
+        <button 
+          onClick={() => joinCircle(circle.id)}
+          className="bg-blue-500 text-white px-3 py-1 rounded text-xs hover:bg-blue-600"
+        >
+          Join
+        </button>
+      </div>
+    ))
+  )}
+</div>
             </div>
           )}
         </main>

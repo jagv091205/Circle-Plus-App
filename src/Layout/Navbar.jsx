@@ -12,10 +12,27 @@ export default function Navbar({ user, onLogout, onPostClick }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [showSearchResults, setShowSearchResults] = useState(false);
+  const [profileData, setProfileData] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     if (!user) return;
+    
+    // Fetch user profile data
+    const fetchProfile = async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("username, avatar_url")
+        .eq("id", user.id)
+        .single();
+      
+      if (!error && data) {
+        setProfileData(data);
+      }
+    };
+    
+    fetchProfile();
+    
     const fetchUnread = async () => {
       const { data, error } = await supabase
         .from("notifications")
@@ -27,6 +44,7 @@ export default function Navbar({ user, onLogout, onPostClick }) {
       }
     };
     fetchUnread();
+    
     const channel = supabase
       .channel("notifications-realtime")
       .on(
@@ -43,6 +61,7 @@ export default function Navbar({ user, onLogout, onPostClick }) {
         }
       )
       .subscribe();
+    
     return () => {
       supabase.removeChannel(channel);
     };
@@ -70,27 +89,46 @@ export default function Navbar({ user, onLogout, onPostClick }) {
 
   const sendJoinRequest = async (circleId) => {
     try {
+      // Check if circle is public
+      const { data: circleData, error: circleError } = await supabase
+        .from("circles")
+        .select("is_private, creator_id")
+        .eq("id", circleId)
+        .single();
+
+      if (circleError) throw circleError;
+
+      let status = "pending";
+      // If circle is public, join directly
+      if (!circleData.is_private) {
+        status = "active";
+      }
+
       const { error } = await supabase.from("circle_members").insert({
         circle_id: circleId,
         profile_id: user.id,
-        status: "pending",
+        status: status,
       });
+
       if (error) throw error;
 
-      const circle = searchResults.find((c) => c.id === circleId);
-      if (!circle) throw new Error("Circle not found");
+      // Only send notification for private circles
+      if (circleData.is_private) {
+        const { error: notifError } = await supabase.from("notifications").insert({
+          recipient_id: circleData.creator_id,
+          from_user: user.id,
+          type: "join_request",
+          circle_id: circleId,
+          response_status: "pending",
+          read: false,
+        });
+        if (notifError) throw notifError;
+      }
 
-      const { error: notifError } = await supabase.from("notifications").insert({
-        recipient_id: circle.creator_id,
-        from_user: user.id,
-        type: "join_request",
-        circle_id: circleId,
-        response_status: "pending",
-        read: false,
-      });
-      if (notifError) throw notifError;
+      alert(circleData.is_private ? "Join request sent!" : "Successfully joined the circle!");
+      setShowSearchResults(false);
+      setSearchQuery("");
 
-      alert("Join request sent!");
     } catch (error) {
       console.error("Error sending join request:", error);
       alert("Failed to send join request.");
@@ -100,7 +138,12 @@ export default function Navbar({ user, onLogout, onPostClick }) {
   return (
     <>
       <nav className="flex items-center justify-between bg-white px-6 py-4 shadow-md">
-        <div className="text-2xl font-bold text-blue-600">Circle</div>
+        <div
+          className="text-2xl font-bold text-blue-600 cursor-pointer"
+          onClick={() => navigate("/home")}
+        >
+          Circle
+        </div>
         <div className="flex-1 mx-8 relative">
           <form onSubmit={handleSearch} className="relative">
             <input
@@ -113,7 +156,7 @@ export default function Navbar({ user, onLogout, onPostClick }) {
             <FaSearch className="absolute left-3 top-3 text-gray-400" />
           </form>
           {showSearchResults && (
-            <div className="absolute z-10 w-full mt-2 bg-white rounded-lg shadow-lg border">
+            <div className="absolute z-10 w-full mt-2 bg-white rounded-lg shadow-lg border max-h-60 overflow-y-auto">
               {searchResults.length === 0 ? (
                 <p className="p-4 text-gray-500">No public circles found.</p>
               ) : (
@@ -121,17 +164,20 @@ export default function Navbar({ user, onLogout, onPostClick }) {
                   {searchResults.map((circle) => (
                     <li
                       key={circle.id}
-                      className="p-4 border-b last:border-0 flex justify-between items-center"
+                      className="p-3 border-b last:border-0 flex justify-between items-center hover:bg-gray-50"
                     >
-                      <div>
-                        <p className="font-medium">{circle.name}</p>
-                        <p className="text-sm text-gray-500">Public Circle</p>
+                      <div className="flex items-center">
+                        <div className="w-8 h-8 rounded-full bg-blue-300 mr-3 flex-shrink-0"></div>
+                        <div>
+                          <p className="font-medium text-sm">{circle.name}</p>
+                          <p className="text-xs text-gray-500">Public Circle</p>
+                        </div>
                       </div>
                       <button
                         onClick={() => sendJoinRequest(circle.id)}
-                        className="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600"
+                        className="bg-blue-500 text-white px-3 py-1 rounded text-xs hover:bg-blue-600"
                       >
-                        Request to Join
+                        Join
                       </button>
                     </li>
                   ))}
@@ -184,14 +230,25 @@ export default function Navbar({ user, onLogout, onPostClick }) {
             )}
           </div>
           <div className="relative">
-            <FaUserCircle
-              size={28}
-              className="cursor-pointer text-gray-600"
-              onClick={() => setShowProfileMenu(!showProfileMenu)}
-            />
+            {profileData?.avatar_url ? (
+              <img
+                src={profileData.avatar_url}
+                alt="Profile"
+                className="w-8 h-8 rounded-full cursor-pointer object-cover"
+                onClick={() => setShowProfileMenu(!showProfileMenu)}
+              />
+            ) : (
+              <FaUserCircle
+                size={28}
+                className="cursor-pointer text-gray-600"
+                onClick={() => setShowProfileMenu(!showProfileMenu)}
+              />
+            )}
             {showProfileMenu && (
               <div className="absolute right-0 mt-2 w-40 bg-white shadow-lg rounded border z-50">
-                <div className="px-4 py-2 text-sm text-gray-700">{user?.email}</div>
+                <div className="px-4 py-2 text-sm text-gray-700">
+                  {profileData?.username || user?.email}
+                </div>
                 <button
                   onClick={() => {
                     navigate("/profile");
